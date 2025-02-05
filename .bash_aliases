@@ -1,3 +1,5 @@
+export ROS_WORKSPACE=/home/jetson/catkin_ws/src/mrobosub
+
 alias ronosde="rosnode"
 alias bot_cam="rosservice call /bot_cam/on True; rosservice call /zed/on False"
 alias zed="rosservice call /zed/on True; rosservice call /bot_cam/on False"
