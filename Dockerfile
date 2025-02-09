@@ -1,4 +1,4 @@
-FROM osrf/ros:noetic-desktop
+FROM docker.io/osrf/ros:noetic-desktop
 
 # turtlebot3 packages, vim, screen
 RUN apt-get update && \
@@ -8,7 +8,9 @@ RUN apt-get update && \
                         git \
                         vim \
                         screen \
-                        python3-tk
+                        python3-tk \
+                        libudev-dev \
+                        ros-noetic-pid
 
 RUN pip install mypy -U
 
