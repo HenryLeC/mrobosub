@@ -107,9 +107,12 @@ THRUSTERS.sort(key=lambda thruster: thruster.id)
 SUB_FRAME = np.diag([1, -1, -1])
 THRUSTERS_ROTATIONS = np.array(
     [
-        euler_matrix(radians(thruster.yaw), radians(thruster.pitch), 0.0, "rzyx")[
-            :3, :3
-        ]
+        euler_matrix(
+            radians(thruster.yaw),
+            radians(thruster.pitch),
+            radians(thruster.roll),
+            "rzyx",
+        )[:3, :3]
         @ SUB_FRAME
         for thruster in THRUSTERS
     ]
