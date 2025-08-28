@@ -9,11 +9,23 @@ from mrobosub_msgs.msg import MotorState
 from std_srvs.srv import SetBool, SetBoolResponse
 from typing import Optional
 
+from dynamic_reconfigure.server import Server
+from mrobosub_hal.cfg import thruster_mappingConfig
+
 
 NUM_MOTORS = 8
 
 
+def thruster_mapping_callback(config, _):
+    return config
+
+
 class ThrusterController(Node):
+    """
+    Provides /emergency_stop_motors service
+    and requires /motor_output topic
+    """
+
     def __init__(self):
         super().__init__("thruster_controller")
         print("Launched thruster_controller node")
@@ -24,6 +36,7 @@ class ThrusterController(Node):
         self.serial = None
         self.connect()
         self.get_errors()  # clear errors at the start
+        self.srv = Server(thruster_mappingConfig, thruster_mapping_callback)
 
         self.object_position_service = rospy.Service(
             "emergency_stop_motors", SetBool, self.handle_emergency_stop
@@ -34,7 +47,7 @@ class ThrusterController(Node):
 
     def connect(self) -> bool:
         try:
-            self.serial = Serial(self.port)
+            self.serial = Serial(self.port, timeout=0.5, write_timeout=0.5)
         except SerialException as e:
             print("Could not connect to mini maestro", e)
             return False
@@ -75,25 +88,31 @@ class ThrusterController(Node):
         r.success = True
         return r
 
-    # pwm_raw ranges from -1 to 1
-    # pwm_val ranges from 4000 to 8000
-    def convert_pwm_signal(self, pwm_raw: float) -> int:
+    # pwm_raw should be in [-1, 1]
+    # pwm_val should be in [4000, 8000]
+    def convert_pwm_signal(self, pwm_raw: float) -> Optional[int]:
         if pwm_raw < -1 or pwm_raw > 1:
-            raise ValueError(
+            print(
                 f"Thruster Controller [ERROR]: PWM value {pwm_raw} out of range (should be in [-1, 1])"
             )
-        return int((pwm_raw * 2000) + 6000)
+            return None
+        return int((pwm_raw * 1600) + 6000)
 
     # in case of invalid PWM or motor number parameters, does not send any updated signal to the motor controller
     def send_signal(self, motor: int, pwm_raw: float) -> int:
-        pwm_val: int = self.convert_pwm_signal(pwm_raw)
-        if pwm_val == -1:
+        if getattr(self.srv.config, f"motor{motor}_rev"):
+            pwm_raw *= -1
+        pwm_val = self.convert_pwm_signal(pwm_raw)
+        if pwm_val is None:
             return -1
 
         if motor < 0 or motor >= NUM_MOTORS:
-            raise ValueError(
-                f"motor number {motor} out of range (should be in [0-{NUM_MOTORS-1}])"
+            print(
+                f"ERROR: motor number {motor} out of range (should be in [0, {NUM_MOTORS-1}])"
             )
+            return -1
+
+        motor = getattr(self.srv.config, f"motor{motor}")
 
         LSBs = pwm_val % (2**7)
         MSBs = int(pwm_val / (2**7))

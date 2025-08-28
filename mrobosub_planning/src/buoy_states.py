@@ -1,6 +1,6 @@
 import rospy
 from umrsm import Outcome
-from abstract_states import AlignPathmarker, TimedState
+from abstract_states import AlignPathmarker, TimedState, CenterOnPathmarker
 from periodic_io import PIO, ImageDetections, ImageTarget
 from mrobosub_msgs.srv import ObjectPositionResponse  # type: ignore
 from typing import Dict, Optional, Tuple, Type, Union
@@ -24,6 +24,72 @@ class ZedPause(TimedState):
         return self.TimedOut()
 
 
+class Slalom(TimedState):
+    class TimedOut(Outcome):
+        pass
+
+    class SeenBinsPathmarker(Outcome):
+        pass
+
+    timeout: float = 80.0
+    surge_speed: float = 1.0
+    target_heave: float = 1.0
+    turn_at: float = 10.0
+    turn_for: float = 2.0
+
+    def __init__(self, prev_outcome: Outcome):
+        super().__init__(prev_outcome)
+        PIO.activate_bot_cam()
+        self.found_count = 0
+        self.iter = 0
+
+    def handle_if_not_timedout(self) -> Optional[Outcome]:
+        PIO.set_target_twist_surge(self.surge_speed)
+        PIO.set_target_twist_sway(0.0)
+        PIO.set_target_pose_heave(self.target_heave)
+
+        self.iter += 1
+        if self.iter < 200:
+            return None
+
+        pm_res = PIO.query_pathmarker_full()
+        if pm_res is None:
+            return None
+
+        if pm_res.centroid_y > 0.9:
+            return None
+
+        if pm_res.centroid_y > 0.5:
+            self.found_count += 1
+        else:
+            self.found_count = 0
+
+        if self.found_count > 10:
+            # return self.SeenBinsPathmarker()
+            return None
+
+        return None
+
+    def handle_once_timedout(self) -> Outcome:
+        return self.TimedOut()
+
+
+class CenterBinsPathmarker(CenterOnPathmarker):
+    class Centered(Outcome):
+        pass
+
+    class TimedOut(Outcome):
+        pass
+
+    timeout: float = 40.0
+
+    def handle_aligned(self) -> Outcome:
+        return self.Centered()
+
+    def handle_once_timedout(self) -> Outcome:
+        return self.TimedOut()
+
+
 class SeenBuoyType(Outcome):
     buoy_results: ObjectPositionResponse
 
@@ -35,7 +101,7 @@ class ApproachBuoyOpen(TimedState):
     class TimedOut(Outcome):
         pass
 
-    surge_speed: float = 0.15
+    surge_speed: float = 1.0
     timeout: float = 20
 
     def __init__(self, prev_outcome: Outcome) -> None:
@@ -68,8 +134,8 @@ class CenterHeaveBuoy(TimedState):
     class TimedOut(CenterHeaveBuoyData):
         pass
 
-    heave_down_speed: float = 0.2
-    heave_up_speed: float = -0.1
+    heave_down_speed: float = 1.5
+    heave_up_speed: float = -0.75
     deadband: int = 5  # pixels, or maybe 5 degrees
     timeout: float = 40.0
 
@@ -115,7 +181,7 @@ class CenterYawBuoy(TimedState):
 
     radius_thold: float = 21.0
     unseen_thold: float = 20.0
-    surge_speed: float = 0.15
+    surge_speed: float = 1.0
     yaw_factor: float = 0.045
     timeout: float = 40.0
 
@@ -174,7 +240,7 @@ class CenterYawBuoyDiscrete(TimedState):
 
     radius_thold: float = 20.0
     unseen_thold: float = 20.0
-    surge_speed: float = 0.15
+    surge_speed: float = 1.0
     # yaw_factor: float = 0.5
     timeout: float = 100.0
 
@@ -311,8 +377,10 @@ class AlignBinsPathmarker(AlignPathmarker):
     class TimedOut(Outcome):
         pass
 
-    yaw_threshold = 2.0
-    timeout = 10.0
+    angle_offset: float = 0.0
+    yaw_threshold: float = 2.0
+    target_heave: float = 1.0
+    timeout: float = 10.0
 
     def __init__(self, prev_outcome: Outcome):
         super().__init__(prev_outcome)
@@ -325,8 +393,16 @@ class AlignBinsPathmarker(AlignPathmarker):
             return None
         outcome = super().handle_if_not_timedout()
         if self.iter == 100 and hasattr(self, "target_angle"):
-            if PIO.query_buoy().found:
+            self.target_angle += self.angle_offset
+            self.target_angle %= 360
+            self.target_angle += 360
+            self.target_angle %= 360
+            if 90 <= self.target_angle < 180:
+                self.target_angle += 180
+            if 180 <= self.target_angle < 270:
                 self.target_angle -= 180
+            print(f"adjusted_setpoint: {self.target_angle=}")
+            PIO.set_target_pose_heave(self.target_heave)
         return outcome
 
     def handle_aligned(self) -> AlignedToBins:
